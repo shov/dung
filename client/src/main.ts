@@ -1,11 +1,9 @@
 // SPIKE client: screens, input with local movement prediction, HUD and debug overlay.
 import {
-  ACTION_KEYS,
   DIRS,
   cellAt,
   chunkKey,
   isWalkable,
-  matchRules,
   type Bible,
   type Chunk,
   type ClientMsg,
@@ -209,27 +207,20 @@ function renderHud() {
   renderDebug();
 }
 
+/** Hints never reveal what works where: a fixed legend of world verbs plus a neutral Space action. */
 function renderHints() {
   if (!bible || !player) return;
   const hints: [string, string][] = [["WASD", "идти"]];
   if (Object.keys(player.inventory).length) hints.push(["Tab", "сменить предмет"]);
   const t = facedTarget();
-  let targetLabel = "";
-  if (t) {
-    targetLabel = t.name;
+  const onFloor = !t || (!t.isEntity && t.id === bible.floorTile);
+  if (!onFloor) {
     const item = player.selected;
-    const useRules = item ? matchRules(bible, "use_item", t.id, { item }) : [];
-    if (item && useRules.length) hints.push(["Space", useRules[0].label]);
-    else if (item && t.isEntity) hints.push(["Space", `применить: ${bible.entities[item]?.name ?? item}`]);
-    for (const key of ["SPACE", ...ACTION_KEYS] as TriggerKey[]) {
-      if (key === "SPACE" && item && (useRules.length || t.isEntity)) continue;
-      const rules = matchRules(bible, "interact", t.id, { key });
-      if (rules.length) hints.push([key === "SPACE" ? "Space" : key, rules[0].label]);
-    }
-    if (t.isEntity && !item && !bible.rules.some((r) => r.target === t.id)) hints.push(["Space", "осмотреть"]);
+    hints.push(["Space", item ? `применить: ${bible.entities[item]?.name ?? item}` : "осмотреть"]);
   }
+  for (const a of bible.actions) hints.push([a.key, a.verb]);
   $("hints").innerHTML =
-    (targetLabel ? `<span class="target">перед тобой: ${escape(targetLabel)}</span>` : "") +
+    (t && !onFloor ? `<span class="target">перед тобой: ${escape(t.name)}</span>` : "") +
     hints.map(([k, l]) => `<span><b>${k}</b>${escape(l)}</span>`).join("");
 }
 

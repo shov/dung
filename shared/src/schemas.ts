@@ -10,6 +10,34 @@ export const SPRITE = 16;
 export const ACTION_KEYS = ["E", "Q", "F", "R", "1", "2", "3", "4"] as const;
 export const TRIGGER_KEYS = ["SPACE", ...ACTION_KEYS] as const;
 
+/**
+ * Closed property vocabulary. Every tile and entity carries a set of these; rules match on them,
+ * so one rule ("sharp cuts wood+flexible") covers every knife and every bush. Hidden from the player.
+ */
+export const PROPERTIES = [
+  // material
+  "metal", "wood", "stone", "glass", "cloth", "bone", "paper", "rope", "liquid", "plant", "earth", "flesh",
+  // physical
+  "sharp", "blunt", "heavy", "light", "hard", "brittle", "flexible", "long", "hot", "cold", "wet", "sticky",
+  "hollow", "living",
+  // chemical / elemental
+  "flammable", "burning", "conductive", "insulating", "corrosive", "explosive", "edible", "sweet", "poisonous",
+  "fragrant",
+  // magical
+  "magic", "cursed", "holy", "glowing",
+] as const;
+export type Prop = (typeof PROPERTIES)[number];
+/**
+ * Plain strings on purpose: with an enum, one invented property makes the CLI silently re-ask the model
+ * (several times the latency). The server drops anything outside PROPERTIES instead.
+ */
+const PropListSchema = z.array(z.string()).describe("Only values from the PROPERTIES list");
+export const isProp = (p: string): p is Prop => (PROPERTIES as readonly string[]).includes(p);
+
+const SENSORY =
+  "1-2 sentences of what the character perceives: look, smell, touch, temperature, weight, sound. " +
+  "Must agree with props but never list them and never hint where or how it could be used.";
+
 /** 16 rows x 16 chars; each char is a palette index 0-9a-f, '.' = transparent. */
 export const SpriteSchema = z.array(z.string()).describe(
   "Exactly 16 strings of exactly 16 chars. Each char is a hex palette index (0-9, a-f) or '.' for transparent.",
@@ -20,6 +48,8 @@ export const TileDefSchema = z.object({
   id: z.string().describe("snake_case id, unique"),
   name: z.string(),
   passable: z.boolean(),
+  props: PropListSchema,
+  description: z.string().describe(SENSORY),
   look: z.string().describe("Short visual description for the pixel artist: colours, pattern"),
 });
 
@@ -30,7 +60,8 @@ export const EntityDefSchema = z.object({
     "item: picked up into inventory when the player steps on it. obstacle: solid, blocks movement until a rule removes/replaces it. feature: anything else (signs, altars, NPC-like props); solid or not.",
   ),
   solid: z.boolean(),
-  description: z.string().describe("One short sentence shown when examined."),
+  props: PropListSchema,
+  description: z.string().describe(SENSORY),
   look: z.string().describe("Short visual description for the pixel artist: shape, colours"),
 });
 
@@ -78,16 +109,16 @@ export const EffectSchema = z.object({
 export const RuleSchema = z.object({
   id: z.string(),
   trigger: z.enum(["interact", "step", "use_item"]).describe(
-    "interact: player presses `key` while facing `target`. step: player walks onto `target`. use_item: player presses SPACE facing `target` with `item` selected.",
+    "interact: player presses `key` while facing the target. step: player walks onto the target. use_item: player presses SPACE facing the target with an item selected.",
   ),
   key: z.enum(TRIGGER_KEYS).nullable().describe("interact only"),
-  item: z.string().nullable().describe("use_item only: item entity id"),
-  target: z.string().describe("entity type id or tile id"),
-  label: z.string().describe("2-4 word verb phrase for the on-screen key hint, e.g. 'unlock door'"),
+  item: z.string().nullable().describe("use_item: exact item id, only for unique pairings (a key for its door); else null"),
+  itemProps: PropListSchema.describe("use_item: the selected item must have ALL of these. Prefer this over item."),
+  target: z.string().nullable().describe("exact entity/tile id, only for unique objects; else null"),
+  targetProps: PropListSchema.describe("the target must have ALL of these. Prefer this over target."),
   conditions: z.array(ConditionSchema),
   effects: z.array(EffectSchema),
-  /** shown when conditions fail; null = silent */
-  failText: z.string().nullable(),
+  failText: z.string().nullable().describe("Neutral text when conditions fail, no hints; null = silent"),
 });
 
 export const ActionBindingSchema = z.object({

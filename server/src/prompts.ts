@@ -1,5 +1,5 @@
 // Prompt text. Stable parts go into the system prompt so the CLI's prompt cache can reuse them.
-import { CHUNK, type Bible, type Player } from "@dung/shared";
+import { CHUNK, PROPERTIES, type Bible, type Player } from "@dung/shared";
 import { digest } from "./bible.ts";
 
 const ENGINE = `You design content for a tiny top-down pixel adventure. The world is generated piece by piece
@@ -12,12 +12,26 @@ ENGINE FACTS (you cannot change these):
   "obstacle" (always solid; stays until a rule removes or replaces it), "feature" (props, signs, altars; solid or not).
 - The player has an inventory (item id -> count), one selected item (Tab cycles), boolean flags and numeric counters.
   There is no death and no real-time enemies: bad outcomes are messages, lost items or lower counters.
-- Interaction happens on the tile the player faces. SPACE = generic interact. With an item selected, SPACE uses
-  that item on the faced target. A few extra keys (E, Q, F, R, 1-4) are bound to world-specific verbs.
-- Rules: trigger (interact with key | step onto target | use_item item on target) + conditions + effects, all from a
-  closed set. Effects act on the target cell: remove_entity / replace_entity (the faced entity), set_tile (that cell),
+- Interaction happens on the tile the player faces. SPACE empty-handed examines (shows the description).
+  With an item selected, SPACE uses that item on the faced target. A few extra keys (E, Q, F, R, 1-4) are bound to
+  world-specific verbs (dig, pry, light...) that act on the faced target.
+- Every tile and entity has PROPERTIES from this closed list (hidden from the player):
+  ${PROPERTIES.join(", ")}.
+  Give each thing the 2-6 properties that honestly describe its matter and nature (a knife: metal, sharp, hard,
+  conductive; a bush: plant, wood, flexible, flammable; a frayed wire: metal, conductive, flexible).
+- Rules: trigger (interact with key | step onto target | use_item) + conditions + effects, all from a closed set.
+  Rules match BY PROPERTIES: itemProps (the used item must have all of them) and targetProps (the target must have
+  all of them). This makes the world systemic: "sharp on plant+flexible -> remove_entity" lets ANY sharp thing cut
+  ANY bush. Use exact ids (item/target) only for truly unique pairings, like a key and its own door.
+  Effects act on the target cell: remove_entity / replace_entity (the faced entity), set_tile (that cell),
   spawn (target cell + dx,dy), teleport (player + dx,dy). give_item/take_item/counter_add use amount (default 1).
 - Every field of a condition/effect object must be present; use null for fields that do not apply.
+
+NO SPOILERS (the fun is figuring things out):
+- description is sensory only: what the character sees, smells, feels, how warm/cold/heavy it is. It must agree
+  with the properties without listing them, and must never say or hint where, on what or how to use it
+  ("сладкий липкий мёд, пахнет цветами" is good; "тролль наверняка оценит сладкое" is forbidden).
+- failText and messages after an attempt are neutral and never reveal the right solution.
 
 VISUALS: you never draw. Give every tile/entity a short "look" (shape, colours) for a separate pixel artist.
 
@@ -25,8 +39,8 @@ STYLE:
 - Items are stereotypical and instantly recognisable (key, torch, rope, pickaxe, coin, potion, map, bone...).
 - Obstacles are classic and readable (locked door, rubble, chasm, thorny bush, sleeping guard...), each solvable with
   something that exists in the world.
-- Keep complexity low: few rules, short chains. Player-facing text (names, descriptions, labels, messages,
-  failText, summary, goal) is in Russian. Ids are English snake_case.`;
+- Keep complexity low: few rules, short chains. Player-facing text (names, descriptions, messages, failText,
+  summary, goal) is in Russian. Ids are English snake_case.`;
 
 export function bibleSystem() {
   return `${ENGINE}
@@ -35,9 +49,11 @@ TASK: invent a whole small world bible in one go: setting, palette (8-16 colours
 5-8 tiles (including one default passable floor), 8-14 entities (mix of items, obstacles, features),
 2-4 situational action keys with verbs that fit the setting, 0-3 counters and a loose goal.
 
-The "rules" array is REQUIRED and must hold 6-14 rules that make the items and obstacles meaningful: every obstacle
-needs at least one rule that clears it (e.g. use_item key on locked_door -> replace_entity open_door), and every
-action key needs at least one interact rule using it. Rules may reference only ids you define.`;
+The "rules" array is REQUIRED and must hold 6-14 rules, mostly property-based, that make the items and obstacles
+meaningful: every obstacle needs at least one way to clear it (e.g. use_item itemProps [sharp] on targetProps
+[plant, flexible] -> remove_entity; use_item itemProps [burning] on targetProps [flammable] -> replace_entity ashes),
+and every action key needs at least one interact rule using it. Prefer several items that could each solve an
+obstacle in their own way. Rules may reference only ids you define.`;
 }
 
 export function bibleUser(themeHint: string) {
@@ -93,30 +109,34 @@ REQUIREMENTS:
   neighbours' open border cells so paths continue. Every open part of the chunk should be reachable.
 - entities: 1-4 items and 0-3 obstacles/features on passable tiles, x and y in 0..${CHUNK - 1}. Do not block every
   path with obstacles unless the item that clears it can be found in this chunk or is already in the inventory.
-- Prefer existing ids. You may add at most 2 newEntities and 1 newTile (with sprites) and the newRules that give them
-  meaning; leave the arrays empty when nothing new is needed. Difficulty and novelty may grow slowly with distance.
+- Prefer existing ids. You may add at most 2 newEntities and 1 newTile and the newRules that give them meaning
+  (existing property rules may already cover them); leave the arrays empty when nothing new is needed. Difficulty and novelty may grow slowly with distance.
 - Occasionally place something that advances the goal.`;
 }
 
 export function improviseUser(o: {
   item: string | null;
+  itemProps: readonly string[];
   key: string;
   target: string;
+  targetProps: readonly string[];
   player: Player;
   journal: string[];
 }) {
   const action = o.item
-    ? `uses the item "${o.item}" on "${o.target}" (trigger use_item, item "${o.item}", target "${o.target}")`
-    : `presses ${o.key} on "${o.target}" (trigger interact, key "${o.key}", target "${o.target}")`;
+    ? `uses the item "${o.item}" [${o.itemProps.join(",")}] on "${o.target}" [${o.targetProps.join(",")}] (trigger use_item)`
+    : `presses ${o.key} on "${o.target}" [${o.targetProps.join(",")}] (trigger interact, key "${o.key}")`;
   return `No rule covers this yet: the player ${action}.
 PLAYER: inventory ${JSON.stringify(o.player.inventory)}, flags ${JSON.stringify(o.player.flags)}, counters ${JSON.stringify(o.player.counters)}
 RECENT EVENTS:
 ${o.journal.map((j) => `- ${j}`).join("\n") || "- (none)"}
 
-Decide what plausibly happens in this world. Return a reusable rule with exactly that trigger/key/item/target
-(conditions may be empty), or rule = null if nothing happens. Keep it simple and fair; a small reward for curiosity is
-good, permanently soft-locking the player is not. message is what the player sees right now.
-Add newEntities/newTiles only if an effect needs a type that does not exist yet.`;
+Decide what plausibly happens, judging by the PROPERTIES of the item and the target, like real physics, chemistry
+or the world's magic would. Return a reusable rule that generalises by properties: pick the itemProps/targetProps
+that actually explain the outcome (they must be subsets of the properties above), with item/target = null unless the
+pairing is truly unique. rule = null if nothing happens. Keep it fair: a small reward for curiosity is good,
+permanently soft-locking the player is not. message is what the player sees right now: sensory, no hints about
+what else to try. Add newEntities/newTiles only if an effect needs a type that does not exist yet.`;
 }
 
 export function spriteSystem(palette: string[]) {

@@ -8,19 +8,23 @@ import {
   SpriteBatchSchema,
   chunkKey,
   chunkOf,
+  matchRules,
+  propsOf,
   isWalkable,
   localOf,
+  type Bible,
   type Chunk,
   type ChunkGen,
   type Dir,
   type Metric,
   type Player,
+  type Rule,
   type ServerMsg,
   type TriggerKey,
 } from "@dung/shared";
 import { applySprites, buildBible, merge, missingSprites } from "./bible.ts";
 import { repairConnectivity, type NeighbourEdges, type Side } from "./connectivity.ts";
-import { applyRule, interact, move, newEntityId, type GameState, type Outcome } from "./engine.ts";
+import { applyRule, blankEffect, describe, interact, move, newEntityId, type GameState, type Outcome } from "./engine.ts";
 import { LimitError, llm } from "./llm.ts";
 import { bibleSystem, bibleUser, chunkUser, improviseUser, spriteSystem, spriteUser, worldSystem } from "./prompts.ts";
 import type { JournalEntry, Store } from "./store.ts";
@@ -89,6 +93,7 @@ export class Game {
 
   static async load(store: Store, send: Send, id: string): Promise<Game> {
     const data = await store.load(id);
+    upgradeBible(data.bible);
     const chunks = new Map(data.chunks.map((c) => [chunkKey(c.cx, c.cy), c]));
     return new Game(id, { bible: data.bible, player: data.player, chunks }, data.journal, store, send);
   }
@@ -136,6 +141,7 @@ export class Game {
     if (!items.length) return;
     p.selected = p.selected === null ? items[0] : (items[items.indexOf(p.selected) + 1] ?? null);
     this.send({ t: "player", player: p });
+    this.send({ t: "log", lines: [p.selected ? `В руке: ${describe(this.state, p.selected)}` : "Руки пусты."] });
     this.schedulePlayerSave();
   }
 
@@ -202,29 +208,30 @@ export class Game {
         model: CHUNK_MODEL,
         effort: "low",
         system: worldSystem(s.bible),
-        user: improviseUser({ item: req.item, key: req.key, target: req.target.id, player: s.player, journal: this.recentJournal() }),
+        user: improviseUser({
+          item: req.item,
+          itemProps: propsOf(s.bible, req.item),
+          key: req.key,
+          target: req.target.id,
+          targetProps: propsOf(s.bible, req.target.id),
+          player: s.player,
+          journal: this.recentJournal(),
+        }),
         schema: ImproviseSchema,
       });
       this.metric(res.metric);
       const { data } = res;
-      // Pin the rule to the situation that asked for it, whatever Claude wrote.
-      const rule = data.rule && {
-        ...data.rule,
-        trigger: req.item ? ("use_item" as const) : ("interact" as const),
-        key: req.item ? null : req.key,
-        item: req.item,
-        target: req.target.id,
-      };
-      const added = merge(s.bible, { tiles: data.newTiles, entities: data.newEntities, rules: rule ? [rule] : [] });
-      if (added.tiles || added.entities || added.rules.length) {
+      const added = merge(s.bible, { tiles: data.newTiles, entities: data.newEntities });
+      const rule = this.learnRule(req, data.rule, data.message);
+      if (added.tiles || added.entities || rule) {
         await this.store.saveBible(this.id, s.bible);
         this.send({ t: "bible", bible: s.bible });
         this.queueSprites();
       }
-      const out = added.rules[0] ? applyRule(s, added.rules[0], req.target) : emptyOutcome();
-      out.messages.unshift(data.message);
+      const out = rule && !rule.noop ? applyRule(s, rule.rule, req.target) : emptyOutcome();
+      out.messages = [data.message, ...out.messages.filter((m) => m !== data.message)];
       const what = req.item ? `применил ${req.item} к ${req.target.id}` : `нажал ${req.key} на ${req.target.id}`;
-      await this.publish(out, `${what}: ${data.message}${added.rules[0] ? ` (новое правило ${added.rules[0].id})` : ""}`);
+      await this.publish(out, `${what}: ${data.message}${rule ? ` (${rule.noop ? "ничего, запомнено" : `новое правило ${rule.rule.id}`})` : ""}`);
     } catch (e) {
       if (!this.handleLimit(e)) {
         this.metricFromError(e);
@@ -234,6 +241,40 @@ export class Game {
       this.busy = false;
       this.send({ t: "thinking", on: false });
     }
+  }
+
+  /**
+   * Store what Claude decided so the same situation never needs Claude again.
+   * A property rule must actually cover the situation that asked for it; otherwise it is
+   * narrowed to the exact item/target ids. "Nothing happens" is remembered the same way.
+   */
+  private learnRule(req: NonNullable<Outcome["improvise"]>, proposed: Rule | null, message: string) {
+    const s = this.state;
+    const situation = {
+      trigger: req.item ? ("use_item" as const) : ("interact" as const),
+      key: req.item ? null : req.key,
+    };
+    const exact = { item: req.item, itemProps: [], target: req.target.id, targetProps: [] };
+    const covers = (r: Rule) =>
+      matchRules(s.bible, situation.trigger, req.target.id, { key: req.key, item: req.item }).some((m) => m.id === r.id);
+
+    if (!proposed) {
+      const noop: Rule = {
+        id: `noop_${req.item ?? req.key}_${req.target.id}`.toLowerCase(),
+        ...situation,
+        ...exact,
+        conditions: [],
+        effects: [{ ...blankEffect, type: "message", text: message }],
+        failText: null,
+      };
+      const [rule] = merge(s.bible, { rules: [noop] }).rules;
+      return rule ? { rule, noop: true } : null;
+    }
+    const [general] = merge(s.bible, { rules: [{ ...proposed, ...situation }] }).rules;
+    if (general && covers(general)) return { rule: general, noop: false };
+    if (general) s.bible.rules = s.bible.rules.filter((r) => r !== general);
+    const [narrow] = merge(s.bible, { rules: [{ ...proposed, ...situation, ...exact }] }).rules;
+    return narrow ? { rule: narrow, noop: false } : null;
   }
 
   // ---------- chunk generation ----------
@@ -424,6 +465,15 @@ export class Game {
       void this.store.savePlayer(this.id, this.state.player);
     }, 500);
   }
+}
+
+/** Saves from before the property system: fill in the new fields so they still load. */
+function upgradeBible(bible: Bible) {
+  for (const def of [...Object.values(bible.tiles), ...Object.values(bible.entities)]) {
+    def.props ??= [];
+    def.description ??= "";
+  }
+  bible.rules = bible.rules.map((r) => ({ ...r, itemProps: r.itemProps ?? [], targetProps: r.targetProps ?? [] }));
 }
 
 function entityCounts(chunks: Iterable<Chunk>) {

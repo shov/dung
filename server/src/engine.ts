@@ -143,8 +143,7 @@ function fireRules(s: GameState, rules: Rule[], target: Target, out: Outcome): b
     out.firedRule = ok.id;
     return true;
   }
-  const fail = rules.find((r) => r.failText)?.failText;
-  if (fail) out.messages.push(fail);
+  out.messages.push(rules.find((r) => r.failText)?.failText ?? "Ничего не происходит.");
   return false;
 }
 
@@ -160,35 +159,35 @@ export function targetAt(s: GameState, x: number, y: number): Target | null {
   return { x, y, entityId: top?.id ?? null, id: top?.type ?? cell.tile };
 }
 
+/** Name + sensory description: what examining something shows. */
+export function describe(s: GameState, id: string) {
+  const def = s.bible.entities[id] ?? s.bible.tiles[id];
+  return def ? `${def.name}. ${def.description}` : "Ничего особенного.";
+}
+
+/**
+ * SPACE with an item uses it on the faced target; SPACE empty-handed examines; world verbs
+ * (E, Q, ...) act on the target. When no rule covers a use or a verb, Claude is asked.
+ * Bare floor never triggers improvisation, so idle key presses stay free.
+ */
 export function interact(s: GameState, key: TriggerKey): Outcome {
   const out = newOutcome();
   const target = facedTarget(s);
   if (!target) return out;
   const item = s.player.selected;
+  const isFloor = !target.entityId && target.id === s.bible.floorTile;
 
   if (key === "SPACE" && item) {
     const rules = matchRules(s.bible, "use_item", target.id, { item });
-    if (rules.length) {
-      fireRules(s, rules, target, out);
-      return out;
-    }
-    // Using an item on a plain tile with its own interact rule falls through to that rule.
-    if (target.entityId || matchRules(s.bible, "interact", target.id, { key }).length === 0) {
-      out.improvise = { target, item, key };
-      return out;
-    }
-  }
-
-  const rules = matchRules(s.bible, "interact", target.id, { key });
-  if (rules.length) {
-    fireRules(s, rules, target, out);
+    if (rules.length) fireRules(s, rules, target, out);
+    else if (!isFloor) out.improvise = { target, item, key };
     return out;
   }
-  if (key === "SPACE" && target.entityId) {
-    const hasAnyRule = s.bible.rules.some((r) => r.target === target.id);
-    if (!hasAnyRule) out.improvise = { target, item: null, key };
-    else out.messages.push(s.bible.entities[target.id]?.description ?? "Ничего не происходит.");
-  }
+  const rules = matchRules(s.bible, "interact", target.id, { key });
+  if (rules.length) fireRules(s, rules, target, out);
+  else if (key === "SPACE") {
+    if (!isFloor) out.messages.push(describe(s, target.id));
+  } else if (!isFloor) out.improvise = { target, item: null, key };
   return out;
 }
 
@@ -204,7 +203,7 @@ export function step(s: GameState, x: number, y: number, out: Outcome) {
     if (custom.length) fireRules(s, custom, target, out);
     else {
       applyEffects(s, [{ ...blankEffect, type: "give_item", item: inst.type }, { ...blankEffect, type: "remove_entity" }], target, out);
-      out.messages.push(`Подобрано: ${def.name}.`);
+      out.messages.push(`Подобрано: ${def.name}. ${def.description}`);
     }
   }
   const tileRules = matchRules(s.bible, "step", cell.tile);

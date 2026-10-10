@@ -2,6 +2,7 @@
 import {
   ACTION_KEYS,
   SPRITE,
+  isProp,
   type Bible,
   type BibleGen,
   type EntityGen,
@@ -51,7 +52,7 @@ export function buildBible(gen: BibleGen): Bible {
     const floor = Object.values(bible.tiles).find((t) => t.passable);
     if (floor) bible.floorTile = floor.id;
     else {
-      bible.tiles.floor = { id: "floor", name: "Пол", passable: true, look: "plain stone floor", sprite: null };
+      bible.tiles.floor = { id: "floor", name: "Пол", passable: true, props: ["stone", "hard"], description: "Ровный холодный камень.", look: "plain stone floor", sprite: null };
       bible.floorTile = "floor";
     }
   }
@@ -76,7 +77,7 @@ export function merge(
   let entities = 0;
   for (const t of add.tiles ?? []) {
     if (bible.tiles[t.id] || bible.entities[t.id]) continue;
-    bible.tiles[t.id] = { ...t, sprite: null };
+    bible.tiles[t.id] = { ...t, props: t.props.filter(isProp), sprite: null };
     tiles++;
   }
   for (const e of add.entities ?? []) {
@@ -84,6 +85,7 @@ export function merge(
     bible.entities[e.id] = {
       ...e,
       solid: e.kind === "item" ? false : e.kind === "obstacle" ? true : e.solid,
+      props: e.props.filter(isProp),
       sprite: null,
     };
     entities++;
@@ -104,10 +106,14 @@ export function merge(
 export function validateRule(bible: Bible, r: Rule): Rule | null {
   const known = (id: string | null) => !!id && (!!bible.tiles[id] || !!bible.entities[id]);
   const isItem = (id: string | null) => !!id && bible.entities[id]?.kind === "item";
-  if (!known(r.target)) return null;
+  // An unknown property would make the rule broader than intended: reject instead of dropping it.
+  if (![...r.itemProps, ...r.targetProps].every(isProp)) return null;
+  const target = known(r.target) ? r.target : null;
+  if (!target && !r.targetProps.length) return null;
   const keys = new Set<string>(["SPACE", ...bible.actions.map((a) => a.key)]);
   if (r.trigger === "interact" && !(r.key && keys.has(r.key))) return null;
-  if (r.trigger === "use_item" && !isItem(r.item)) return null;
+  const item = r.trigger === "use_item" && isItem(r.item) ? r.item : null;
+  if (r.trigger === "use_item" && !item && !r.itemProps.length) return null;
   const effects = r.effects.filter((e) => {
     switch (e.type) {
       case "give_item":
@@ -135,7 +141,10 @@ export function validateRule(bible: Bible, r: Rule): Rule | null {
   return {
     ...r,
     key: r.trigger === "interact" ? r.key : null,
-    item: r.trigger === "use_item" ? r.item : null,
+    item,
+    itemProps: r.trigger === "use_item" ? [...new Set(r.itemProps)] : [],
+    target,
+    targetProps: [...new Set(r.targetProps)],
     effects,
     conditions,
   };
@@ -180,13 +189,13 @@ export function digest(bible: Bible): string {
     `FLOOR TILE: ${bible.floorTile}`,
     `ACTION KEYS: SPACE=interact, ${bible.actions.map((a) => `${a.key}=${a.verb}`).join(", ")}`,
     "TILES:",
-    ...Object.values(bible.tiles).map((t) => `- ${t.id} "${t.name}" ${t.passable ? "passable" : "wall"}`),
+    ...Object.values(bible.tiles).map((t) => `- ${t.id} "${t.name}" ${t.passable ? "passable" : "wall"} [${t.props.join(",")}]`),
     "ENTITIES:",
     ...Object.values(bible.entities).map(
-      (e) => `- ${e.id} "${e.name}" ${e.kind}${e.solid ? " solid" : ""}: ${e.description}`,
+      (e) => `- ${e.id} "${e.name}" ${e.kind}${e.solid ? " solid" : ""} [${e.props.join(",")}]`,
     ),
     "RULES:",
-    ...bible.rules.map((r) => `- ${strip({ ...r, label: undefined })}`),
+    ...bible.rules.map((r) => `- ${strip(r)}`),
   ];
   return lines.join("\n");
 }

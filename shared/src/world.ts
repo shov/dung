@@ -68,13 +68,30 @@ export function isWalkable(bible: Bible, chunks: Map<string, Chunk>, x: number, 
   return !cell.entities.some((e) => bible.entities[e.type]?.solid);
 }
 
-/** Rules that could fire for a target with the given trigger shape (conditions not checked). */
+export const propsOf = (bible: Bible, id: string | null | undefined): readonly string[] =>
+  (id && (bible.entities[id]?.props ?? bible.tiles[id]?.props)) || [];
+
+const hasAll = (have: readonly string[], need: readonly string[]) => need.every((p) => have.includes(p));
+
+/** How specific a rule is: exact ids beat property sets, more properties beat fewer. */
+const specificity = (r: Rule) => (r.item ? 100 : 0) + (r.target ? 100 : 0) + r.itemProps.length + r.targetProps.length;
+
+/**
+ * Rules that could fire for a target with the given trigger shape (conditions not checked),
+ * most specific first. Matching is by exact id where the rule names one, else by properties.
+ */
 export function matchRules(bible: Bible, trigger: Rule["trigger"], target: string, opts: { key?: string; item?: string | null } = {}) {
-  return bible.rules.filter(
-    (r) =>
-      r.trigger === trigger &&
-      r.target === target &&
-      (trigger !== "interact" || r.key === opts.key) &&
-      (trigger !== "use_item" || r.item === opts.item),
-  );
+  const targetProps = propsOf(bible, target);
+  const itemProps = propsOf(bible, opts.item);
+  return bible.rules
+    .filter(
+      (r) =>
+        r.trigger === trigger &&
+        (r.target ? r.target === target : r.targetProps.length > 0) &&
+        hasAll(targetProps, r.targetProps) &&
+        (trigger !== "interact" || r.key === opts.key) &&
+        (trigger !== "use_item" ||
+          (!!opts.item && (r.item ? r.item === opts.item : r.itemProps.length > 0) && hasAll(itemProps, r.itemProps))),
+    )
+    .sort((a, b) => specificity(b) - specificity(a));
 }

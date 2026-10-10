@@ -6,14 +6,16 @@ import { logMetric } from "./game.ts";
 import { llm } from "./llm.ts";
 import { bibleSystem, bibleUser, chunkUser, spriteSystem, spriteUser, worldSystem } from "./prompts.ts";
 
-const b = await llm({ kind: "bible", model: "sonnet", effort: "medium", system: bibleSystem(), user: bibleUser(process.argv[2] ?? ""), schema: BibleGenSchema });
+const b = await llm({ kind: "bible", model: "sonnet", effort: (process.env.BIBLE_EFFORT ?? "medium") as "low" | "medium", system: bibleSystem(), user: bibleUser(process.argv[2] ?? ""), schema: BibleGenSchema });
 logMetric(b.metric);
 const bible = buildBible(b.data);
-console.log(bible.title, "|", Object.keys(bible.tiles).join(","), "|", Object.keys(bible.entities).join(","), "| rules", bible.rules.length, "/", b.data.rules.length);
+console.log(bible.title, "| rules", bible.rules.length, "/", b.data.rules.length);
+for (const d of [...Object.values(bible.tiles), ...Object.values(bible.entities)]) console.log(`  ${d.id} [${d.props.join(",")}] — ${d.description}`);
+for (const r of bible.rules) console.log(`  rule ${r.id}: ${r.trigger}${r.key ? " " + r.key : ""} ${r.item ?? `[${r.itemProps}]`} -> ${r.target ?? `[${r.targetProps}]`} => ${r.effects.map((e) => e.type).join(",")}`);
 const player = { x: 8, y: 8, facing: "down" as const, inventory: {}, selected: null, flags: {}, counters: {} };
 const [c, sp] = await Promise.all([
-  llm({ kind: "chunk", model: "haiku", effort: "low", system: worldSystem(bible), user: chunkUser({ cx: 0, cy: 0, edges: {}, summaries: {}, player, journal: [], common: {} }), schema: ChunkGenSchema }),
-  llm({ kind: "sprite", model: "haiku", effort: "low", system: spriteSystem(bible.palette), user: spriteUser(missingSprites(bible).slice(0, 6)), schema: SpriteBatchSchema }),
+  llm({ kind: "chunk", model: "sonnet", effort: "low", system: worldSystem(bible), user: chunkUser({ cx: 0, cy: 0, edges: {}, summaries: {}, player, journal: [], common: {} }), schema: ChunkGenSchema }),
+  llm({ kind: "sprite", model: "sonnet", effort: "low", system: spriteSystem(bible.palette), user: spriteUser(missingSprites(bible).slice(0, 6)), schema: SpriteBatchSchema }),
 ]);
 logMetric(c.metric);
 logMetric(sp.metric);
