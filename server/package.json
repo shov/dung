@@ -1,0 +1,15 @@
+{
+  "name": "@dung/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@dung/shared": "^0.0.0",
+    "ws": "^8.22.0",
+    "zod": "^4.6.5"
+  }
+}

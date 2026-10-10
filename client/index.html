@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dung (SPIKE)</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="stage"></div>
+
+    <div id="hud" hidden>
+      <div id="panel">
+        <div id="title"></div>
+        <div id="goal"></div>
+        <div id="counters"></div>
+        <div id="inventory"></div>
+      </div>
+      <div id="bottom">
+        <div id="log"></div>
+        <div id="hints"></div>
+      </div>
+      <div id="thinking" hidden>мир думает…</div>
+      <pre id="debug" hidden></pre>
+    </div>
+
+    <div id="menu" class="overlay">
+      <div class="box">
+        <h1>Dung <small>SPIKE · throwaway</small></h1>
+        <div id="saves"></div>
+        <h2>Новая игра</h2>
+        <input id="theme" placeholder="намёк на тему (можно пусто)" maxlength="120" />
+        <button id="new-game">Создать мир</button>
+      </div>
+    </div>
+
+    <div id="status" class="overlay" hidden><div class="box" id="status-text"></div></div>
+
+    <div id="blocked" class="overlay" hidden>
+      <div class="box">
+        <h2 id="blocked-title"></h2>
+        <p id="blocked-hint"></p>
+        <pre id="blocked-text"></pre>
+        <button id="retry">Повторить</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

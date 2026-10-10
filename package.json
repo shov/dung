@@ -1,0 +1,24 @@
+{
+  "name": "dung-spike",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "start": "concurrently -k -n server,client -c blue,green \"npm -w server run start\" \"npm -w client run start\"",
+    "dev": "concurrently -k -n server,client -c blue,green \"npm -w server run dev\" \"npm -w client run dev\"",
+    "test": "vitest run",
+    "typecheck": "tsc -p server --noEmit && tsc -p client --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.18.2",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  }
+}

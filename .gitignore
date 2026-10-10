@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.env
+saves-PROTOTYPE-wipe-me/
+.DS_Store
